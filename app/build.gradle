@@ -68,4 +68,6 @@ dependencies {
 
     implementation "com.squareup.moshi:moshi:1.14.0"
     kapt "com.squareup.moshi:moshi-kotlin-codegen:1.14.0"
+
+    implementation "androidx.lifecycle:lifecycle-viewmodel-compose:2.5.1"
 }
