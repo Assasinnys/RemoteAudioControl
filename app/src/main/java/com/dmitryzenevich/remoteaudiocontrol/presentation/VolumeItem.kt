@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.dmitryzenevich.remoteaudiocontrol.R
@@ -39,12 +40,12 @@ fun VolumeItem(
             if (volumeItemState.isMuted.value)
                 Icon(
                     painter = painterResource(R.drawable.ic_volume_off),
-                    contentDescription = "Muted"
+                    contentDescription = stringResource(R.string.accessibility_muted)
                 )
             else
                 Icon(
                     painter = painterResource(R.drawable.ic_volume_up),
-                    contentDescription = "Resumed"
+                    contentDescription = stringResource(R.string.accessibility_resumed)
                 )
         }
     }

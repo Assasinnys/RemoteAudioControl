@@ -4,14 +4,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 
 @Composable
-fun MainScreen(viewModel: MainViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
-    val uiState by viewModel.uiState.collectAsState()
-
+fun MainScreen(
+    uiState: MainScreenUiState,
+    onVolumeChanged: (VolumeItemState, Int) -> Unit,
+    onMuteClick: (VolumeItemState) -> Unit
+) {
     LazyRow(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -22,9 +22,9 @@ fun MainScreen(viewModel: MainViewModel = androidx.lifecycle.viewmodel.compose.v
             VolumeItem(
                 volumeItemState = itemState,
                 onValueChanged = { newValue: Float ->
-                    viewModel.onVolumeChanged(itemState, newValue.toInt())
+                    onVolumeChanged(itemState, newValue.toInt())
                 },
-                onMuteClick = { viewModel.onMuteClick(itemState) }
+                onMuteClick = { onMuteClick(itemState) }
             )
         }
     }

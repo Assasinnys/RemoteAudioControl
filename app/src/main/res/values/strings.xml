@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">Remote Audio Control</string>
+    <string name="ip_dialog_title">Enter a valid ip address</string>
+    
+    
+    <string name="accessibility_ip_address_button">Choose server ip address</string>
+    <string name="accessibility_muted">Muted</string>
+    <string name="accessibility_resumed">Resumed</string>
 </resources>

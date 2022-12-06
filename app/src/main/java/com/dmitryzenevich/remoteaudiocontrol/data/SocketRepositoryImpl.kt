@@ -23,6 +23,7 @@ class SocketRepositoryImpl @Inject constructor(
             true
         } catch (e: Exception) {
             Log.e( javaClass.simpleName, "Socket connection error; address: $address, port: $port", e)
+            socketSource.close()
             false
         }
     }
