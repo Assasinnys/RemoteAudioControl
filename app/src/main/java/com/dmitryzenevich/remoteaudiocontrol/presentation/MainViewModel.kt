@@ -5,57 +5,64 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dmitryzenevich.remoteaudiocontrol.data.SocketRepositoryImpl
 import com.dmitryzenevich.remoteaudiocontrol.data.model.*
+import com.dmitryzenevich.remoteaudiocontrol.presentation.helper.PrefHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import javax.inject.Inject
-import kotlin.math.absoluteValue
+
+const val NOT_BLOCKED = -1L
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
-    private val socketRepositoryImpl: SocketRepositoryImpl
+    private val socketRepositoryImpl: SocketRepositoryImpl,
+    private val prefHelper: PrefHelper
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(MainScreenUiState())
     val uiState = _uiState.asStateFlow()
 
-    private var commandJob: Job? = null
+    private val _showAddressDialog = MutableStateFlow(false)
+    val showAddressDialog = _showAddressDialog.asStateFlow()
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading = _isLoading.asStateFlow()
+
+    @Volatile
+    private var blockingPid: Long = NOT_BLOCKED
+    private var blockingJob: Job? = null
 
     init {
+        connectToSocket()
+    }
+
+    private fun connectToSocket() {
         viewModelScope.launch {
-            val isReady = socketRepositoryImpl.openSocketConnection("10.0.2.2", 54683)
+            _isLoading.value = true
+            val isReady = socketRepositoryImpl.openSocketConnection(prefHelper.getIpAddress(), 54683)
             if (isReady) {
                 socketRepositoryImpl.bindSocketInput()
                     .filterNotNull()
                     .onEach {
-                        Log.i(javaClass.simpleName, "received: $it")
-                        // TODO: test it
+                        Log.i(javaClass.simpleName, "Received: $it")
                         withContext(Dispatchers.Main) { proceedEvent(it) }
                     }
                     .catch { Log.e(javaClass.simpleName, "Fetch event error", it) }
                     .launchIn(CoroutineScope(Dispatchers.IO))
             }
+            _isLoading.value = false
         }
     }
 
     private fun proceedEvent(event: Event) {
-        val volumes = _uiState.value.volumes.toMutableList()
+        val volumes = _uiState.value.volumes
 
         when(event) {
-            is NewSessionEvent -> {
-//                if (_uiState.value.volumes.find { it.pid == event.PID } == null) {
-//                    _uiState.value = MainScreenUiState(volumes = _uiState.value.volumes + event.toVolumeItemState())
-//                }
-            }
+            is NewSessionEvent -> addIfNotExist(event)
             is MuteStateChangedEvent -> {
                 volumes.find { event.PID == it.pid }?.let { item ->
-                    val newItem = item.copy(isMuted = event.isMuted)
-                    volumes.set(
-                        index = volumes.indexOfFirst { it.pid == newItem.pid },
-                        element = newItem
-                    )
+                    item.isMuted.value = event.isMuted
                 }
-                _uiState.value = _uiState.value.copy(volumes = volumes)
             }
             is SetNameEvent -> {
                 volumes.find { event.PID == it.pid }?.let { item ->
@@ -65,7 +72,6 @@ class MainViewModel @Inject constructor(
                         element = newItem
                     )
                 }
-                _uiState.value = _uiState.value.copy(volumes = volumes)
             }
             is StateChangedEvent -> {
                 volumes.find { event.PID == it.pid }?.let { item ->
@@ -75,69 +81,70 @@ class MainViewModel @Inject constructor(
                         element = newItem
                     )
                 }
-                _uiState.value = _uiState.value.copy(volumes = volumes)
             }
             is VolumeChangedEvent -> {
-                addIfNotExist(event)
-                val v = _uiState.value.volumes.toMutableList()
+                if (blockingPid == event.PID) return
 
-                v.find { event.PID == it.pid }?.let { item ->
-                    val newItem = item.copy(volume = event.volume)
-                    v.set(
-                        index = v.indexOfFirst { it.pid == newItem.pid },
-                        element = newItem
-                    )
+                volumes.find { event.PID == it.pid }?.let { item ->
+                    item.volume.value = event.volume
+                    blockVolumeEvent(event.PID)
                 }
-                _uiState.value = _uiState.value.copy(volumes = v)
             }
-            UnknownEvent -> _uiState.value = _uiState.value.copy(isError = true)
+            UnknownEvent -> _uiState.value.isError // TODO: implement error state
+        }
+    }
+
+    private fun blockVolumeEvent(eventPid: Long) {
+        blockingJob?.cancel()
+        blockingJob = viewModelScope.launch {
+            blockingPid = eventPid
+            delay(200)
+            blockingPid = NOT_BLOCKED
         }
     }
 
     fun onVolumeChanged(volumeItemState: VolumeItemState, newVolume: Int) {
         Log.i(javaClass.simpleName, "old volume: ${volumeItemState.volume}, newVolume: $newVolume")
-        val increment = newVolume.minus(volumeItemState.volume)
-        Log.i(javaClass.simpleName, "increment: $increment")
-
-//        val volumes = _uiState.value.volumes.toMutableList()
-//        volumes.find { volumeItemState.pid == it.pid }?.let { item ->
-//            val newItem = item.copy(volume = newVolume)
-//            volumes.set(
-//                index = volumes.indexOfFirst { it.pid == newItem.pid },
-//                element = newItem
-//            )
-//        }
-//        _uiState.value = _uiState.value.copy(volumes = volumes)
-
+        volumeItemState.volume.value = newVolume
         sendCommand(SetVolumeCommand(volumeItemState.pid, newVolume))
     }
 
-    private fun sendCommand(command: Command) {
-        commandJob?.cancel()
-        commandJob = viewModelScope.launch { socketRepositoryImpl.sendCommand(command) }
+    fun onMuteClick(volumeItemState: VolumeItemState) {
+        Log.i(javaClass.simpleName, "new checked: ${!volumeItemState.isMuted.value}")
+        volumeItemState.isMuted.value = !volumeItemState.isMuted.value
+        sendCommand(MuteToggleCommand(volumeItemState.pid))
     }
 
-    private fun addIfNotExist(event: VolumeChangedEvent) {
+    private fun sendCommand(command: Command) {
+        viewModelScope.launch { socketRepositoryImpl.sendCommand(command) }
+    }
+
+    private fun addIfNotExist(event: NewSessionEvent) {
         if (_uiState.value.volumes.find { it.pid == event.PID } == null) {
-            _uiState.value = MainScreenUiState(volumes = _uiState.value.volumes + event.toVolumeItemState())
+            _uiState.value.volumes.add(event.toVolumeItemState())
         }
     }
 
+    fun onAddressClick() {
+        _showAddressDialog.value = true
+        Log.i(javaClass.simpleName, "address clicked")
+    }
+
+    fun onConfirmAddress(ip: String) {
+        if (isValidIp(ip)) {
+            prefHelper.setIpAddress(ip)
+            _showAddressDialog.value = false
+            connectToSocket()
+            Log.i(javaClass.simpleName, "new ip: $ip")
+        }
+    }
+
+    fun getCurrentIp() = prefHelper.getIpAddress().also { Log.i(javaClass.simpleName, "Current ip: $it") }
+
+    private fun isValidIp(ip: String): Boolean = ip.matches(ipCheckRegex.toRegex())
+        .also { Log.i(javaClass.simpleName, "Regex matches: $it") }
 }
 
-data class MainScreenUiState(
-    val volumes: List<VolumeItemState> = emptyList(),
-    val isError: Boolean = false
-)
-
-data class VolumeItemState(
-    val pid: Long,
-    val name: String = "",
-    val volume: Int = 0,
-    val isMuted: Boolean = false,
-    val isActive: Boolean = false
-)
+const val ipCheckRegex = "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}\$"
 
 fun NewSessionEvent.toVolumeItemState() = VolumeItemState(pid = PID)
-
-fun VolumeChangedEvent.toVolumeItemState() = VolumeItemState(pid = PID, volume = volume)
